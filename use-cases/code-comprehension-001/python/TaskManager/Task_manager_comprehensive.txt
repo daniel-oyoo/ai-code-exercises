@@ -1,0 +1,1011 @@
+
+TaskManager Class Documentation
+1. Function Documentation (Numpy-Style Docstrings)
+python
+import argparse
+from datetime import datetime, timedelta
+
+from models import TaskPriority, Task, TaskStatus
+from storage import TaskStorage
+
+
+class TaskManager:
+    """
+    A manager for handling task operations including CRUD operations and statistics.
+    
+    This class provides an interface to manage tasks stored in persistent storage,
+    allowing creation, retrieval, updating, and deletion of tasks with various
+    filtering and tagging capabilities.
+    
+    Attributes
+    ----------
+    storage : TaskStorage
+        The storage backend used for persisting tasks.
+    """
+    
+    def __init__(self, storage_path="tasks.json"):
+        """
+        Initialize TaskManager with a storage backend.
+        
+        Parameters
+        ----------
+        storage_path : str, optional
+            Path to the JSON file for storing tasks (default: "tasks.json")
+        """
+        self.storage = TaskStorage(storage_path)
+
+    def create_task(self, title, description="", priority_value=2,
+                   due_date_str=None, tags=None):
+        """
+        Create a new task and store it in the database.
+        
+        Parameters
+        ----------
+        title : str
+            The title/name of the task (required)
+        description : str, optional
+            Detailed description of the task (default: "")
+        priority_value : int, optional
+            Priority level as integer (1=High, 2=Medium, 3=Low) (default: 2)
+        due_date_str : str, optional
+            Due date in "YYYY-MM-DD" format (default: None)
+        tags : list, optional
+            List of string tags associated with the task (default: None)
+        
+        Returns
+        -------
+        int or None
+            ID of the created task if successful, None if creation failed
+        
+        Raises
+        ------
+        ValueError
+            If due_date_str is provided in incorrect format
+            
+        Notes
+        -----
+        - Priority values are validated using TaskPriority enum
+        - Date parsing uses strict format validation
+        - Empty tags list will be created if None is provided
+        """
+        priority = TaskPriority(priority_value)
+        due_date = None
+        if due_date_str:
+            try:
+                due_date = datetime.strptime(due_date_str, "%Y-%m-%d")
+            except ValueError:
+                print("Invalid date format. Use YYYY-MM-DD")
+                return None
+
+        task = Task(title, description, priority, due_date, tags)
+        task_id = self.storage.add_task(task)
+        return task_id
+
+    def list_tasks(self, status_filter=None, priority_filter=None, show_overdue=False):
+        """
+        Retrieve tasks with optional filtering criteria.
+        
+        Parameters
+        ----------
+        status_filter : str, optional
+            Filter tasks by status (e.g., "pending", "in_progress", "done")
+        priority_filter : int, optional
+            Filter tasks by priority (1=High, 2=Medium, 3=Low)
+        show_overdue : bool, optional
+            If True, return only overdue tasks (default: False)
+        
+        Returns
+        -------
+        list
+            List of Task objects matching the filter criteria
+        
+        Notes
+        -----
+        - Filters are mutually exclusive; show_overdue takes precedence
+        - If no filters provided, returns all tasks
+        - Invalid filter values will raise ValueError from enum conversion
+        """
+        if show_overdue:
+            return self.storage.get_overdue_tasks()
+
+        if status_filter:
+            status = TaskStatus(status_filter)
+            return self.storage.get_tasks_by_status(status)
+
+        if priority_filter:
+            priority = TaskPriority(priority_filter)
+            return self.storage.get_tasks_by_priority(priority)
+
+        return self.storage.get_all_tasks()
+
+    def update_task_status(self, task_id, new_status_value):
+        """
+        Update the status of a specific task.
+        
+        Parameters
+        ----------
+        task_id : int
+            ID of the task to update
+        new_status_value : str
+            New status value ("pending", "in_progress", "done")
+        
+        Returns
+        -------
+        bool
+            True if update successful, False otherwise
+        
+        Notes
+        -----
+        - Special handling for "done" status: calls mark_as_done() to set completion timestamp
+        - For non-done statuses, only updates status field
+        - Returns False if task doesn't exist
+        """
+        new_status = TaskStatus(new_status_value)
+        if new_status == TaskStatus.DONE:
+            task = self.storage.get_task(task_id)
+            if task:
+                task.mark_as_done()
+                self.storage.save()
+                return True
+        else:
+            return self.storage.update_task(task_id, status=new_status)
+
+    def update_task_priority(self, task_id, new_priority_value):
+        """
+        Update task priority level.
+        
+        Parameters
+        ----------
+        task_id : int
+            ID of the task to update
+        new_priority_value : int
+            New priority value (1=High, 2=Medium, 3=Low)
+        
+        Returns
+        -------
+        bool
+            True if update successful, False otherwise
+        """
+        new_priority = TaskPriority(new_priority_value)
+        return self.storage.update_task(task_id, priority=new_priority)
+
+    def update_task_due_date(self, task_id, due_date_str):
+        """
+        Update task due date.
+        
+        Parameters
+        ----------
+        task_id : int
+            ID of the task to update
+        due_date_str : str
+            New due date in "YYYY-MM-DD" format
+        
+        Returns
+        -------
+        bool
+            True if update successful, False otherwise
+            
+        Notes
+        -----
+        - Invalid date format returns False and prints error message
+        - Date validation is strict; does not accept partial dates
+        """
+        try:
+            due_date = datetime.strptime(due_date_str, "%Y-%m-%d")
+            return self.storage.update_task(task_id, due_date=due_date)
+        except ValueError:
+            print("Invalid date format. Use YYYY-MM-DD")
+            return False
+
+    def delete_task(self, task_id):
+        """
+        Delete a task from storage.
+        
+        Parameters
+        ----------
+        task_id : int
+            ID of the task to delete
+        
+        Returns
+        -------
+        bool
+            True if deletion successful, False otherwise
+        """
+        return self.storage.delete_task(task_id)
+
+    def get_task_details(self, task_id):
+        """
+        Retrieve detailed information about a specific task.
+        
+        Parameters
+        ----------
+        task_id : int
+            ID of the task to retrieve
+        
+        Returns
+        -------
+        Task or None
+            Task object if found, None otherwise
+        """
+        return self.storage.get_task(task_id)
+
+    def add_tag_to_task(self, task_id, tag):
+        """
+        Add a tag to a task.
+        
+        Parameters
+        ----------
+        task_id : int
+            ID of the task to tag
+        tag : str
+            Tag to add to the task
+        
+        Returns
+        -------
+        bool
+            True if tag added successfully, False otherwise
+            
+        Notes
+        -----
+        - Prevents duplicate tags on same task
+        - Returns True if tag already exists (idempotent operation)
+        """
+        task = self.storage.get_task(task_id)
+        if task:
+            if tag not in task.tags:
+                task.tags.append(tag)
+                self.storage.save()
+            return True
+        return False
+
+    def remove_tag_from_task(self, task_id, tag):
+        """
+        Remove a tag from a task.
+        
+        Parameters
+        ----------
+        task_id : int
+            ID of the task to modify
+        tag : str
+            Tag to remove from the task
+        
+        Returns
+        -------
+        bool
+            True if tag removed successfully, False otherwise
+            
+        Notes
+        -----
+        - Silent success if tag doesn't exist on task
+        - Returns False if task doesn't exist
+        """
+        task = self.storage.get_task(task_id)
+        if task and tag in task.tags:
+            task.tags.remove(tag)
+            self.storage.save()
+            return True
+        return False
+
+    def get_statistics(self):
+        """
+        Generate comprehensive statistics about stored tasks.
+        
+        Returns
+        -------
+        dict
+            Dictionary containing:
+            - total: total number of tasks
+            - by_status: count of tasks by each status
+            - by_priority: count of tasks by each priority level
+            - overdue: number of overdue tasks
+            - completed_last_week: tasks completed in last 7 days
+        
+        Notes
+        -----
+        - Statistics are calculated on-the-fly from current data
+        - Overdue calculation depends on task.is_overdue() method
+        - Completed tasks are counted if completed within last 7 days
+        """
+        tasks = self.storage.get_all_tasks()
+        total = len(tasks)
+
+        # Count by status
+        status_counts = {status.value: 0 for status in TaskStatus}
+        for task in tasks:
+            status_counts[task.status.value] += 1
+
+        # Count by priority
+        priority_counts = {priority.name: 0 for priority in TaskPriority}
+        for task in tasks:
+            priority_counts[task.priority.name] += 1
+
+        # Count overdue
+        overdue_count = len([task for task in tasks if task.is_overdue()])
+
+        # Count completed in last 7 days
+        seven_days_ago = datetime.now() - timedelta(days=7)
+        completed_recently = len([
+            task for task in tasks
+            if task.completed_at and task.completed_at >= seven_days_ago
+        ])
+
+        return {
+            "total": total,
+            "by_status": status_counts,
+            "by_priority": priority_counts,
+            "overdue": overdue_count,
+            "completed_last_week": completed_recently
+        }
+
+
+
+
+        
+2. Intent and Logic Explanation
+High-Level Purpose
+The TaskManager class serves as a business logic layer between the user interface and data storage, providing a complete task management system with CRUD operations, filtering, tagging, and analytics capabilities.
+Step-by-Step Logic Breakdown
+1. Initialization
+    • Creates a TaskStorage instance to handle persistence (default: JSON file)
+    • Establishes the data access layer abstraction
+2. Task Creation Flow
+text
+1. Validate priority → convert integer to TaskPriority enum
+2. Parse date string → validate format, convert to datetime object
+3. Create Task object → with all provided attributes
+4. Persist to storage → delegate to storage layer, return assigned ID
+3. Task Listing with Filtering
+    • Priority order: show_overdue > status_filter > priority_filter
+    • Uses mutually exclusive filter approach
+    • Converts string/int filters to appropriate enum types
+    • Delegates filtered retrieval to storage methods
+4. Status Update Special Handling
+    • Special logic for "done" status to record completion timestamp
+    • Other statuses use generic update method
+    • Ensures data consistency through storage.save()
+5. Tag Management
+    • Implements idempotent operations (add only if not exists)
+    • Loads task, modifies tags list, persists changes
+    • Returns boolean success indicators
+6. Statistics Generation
+text
+1. Retrieve all tasks from storage
+2. Initialize counters for all possible status/priority values
+3. Iterate through tasks:
+   - Increment status counters
+   - Increment priority counters
+   - Check overdue status
+   - Check recent completions
+4. Compile results into structured dictionary
+Assumptions and Edge Cases
+Assumptions:
+    1. Task IDs are unique integers assigned by storage layer
+    2. TaskStorage methods handle all persistence errors
+    3. Enum conversions will raise ValueError for invalid values
+    4. task.is_overdue() method exists and works correctly
+    5. task.completed_at is None for incomplete tasks
+Edge Cases Handled:
+    • Invalid date formats in creation/update
+    • Non-existent task IDs in update/delete operations
+    • Duplicate tags (prevented)
+    • Empty/missing tags lists
+    • Filter conflicts (overdue vs status vs priority)
+Potential Improvements:
+    1. Error Handling: Replace print statements with proper exception raising
+    2. Filter Combinations: Allow combined filters (status AND priority)
+    3. Batch Operations: Add bulk update/delete methods
+    4. Pagination: Add limit/offset to list_tasks for large datasets
+    5. Input Validation: Add more robust validation for title, description
+    6. Caching: Implement cache for frequently accessed tasks
+    7. Transaction Support: Ensure atomic operations for critical updates
+Suggested Inline Comments for Complex Parameters
+python
+def create_task(self, title, description="", priority_value=2,  # 1=High, 2=Medium, 3=Low
+               due_date_str=None,  # Format: "YYYY-MM-DD", validated strictly
+               tags=None):  # List[str] or None, converted to empty list if None
+    # ... implementation
+
+def list_tasks(self, status_filter=None,  # "pending"|"in_progress"|"done" (TaskStatus enum values)
+               priority_filter=None,  # 1|2|3 (mapped to TaskPriority enum)
+               show_overdue=False):  # Boolean flag, takes precedence over other filters
+    # ... implementation
+
+def get_statistics(self):
+    # Returns dict with keys: total, by_status, by_priority, overdue, completed_last_week
+    # ... implementation
+3. Example Usage
+python
+# Initialize task manager
+manager = TaskManager("my_tasks.json")
+
+# Create tasks
+task_id = manager.create_task(
+    title="Complete documentation",
+    description="Write comprehensive docstrings",
+    priority_value=1,  # High priority
+    due_date_str="2024-12-31",
+    tags=["documentation", "urgent"]
+)
+
+# List tasks
+all_tasks = manager.list_tasks()
+overdue_tasks = manager.list_tasks(show_overdue=True)
+pending_tasks = manager.list_tasks(status_filter="pending")
+
+# Update task
+manager.update_task_status(task_id, "in_progress")
+manager.add_tag_to_task(task_id, "in-progress")
+
+# Get statistics
+stats = manager.get_statistics()
+print(f"Total tasks: {stats['total']}")
+print(f"Overdue: {stats['overdue']}")
+
+# Cleanup
+manager.delete_task(task_id)
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+can this help a complete begginer to python understand and modify this code if not give it to me like yoyre teaching a kid
+ 
+ 
+ 
+ 
+ 
+ 
+TaskManager Class Explained Like You're Learning to Ride a Bike 🚲
+Hey there! Let me explain this code like you're learning Python for the first time. This is a To-Do List Manager program!
+What This Program Does (In Simple Words)
+Imagine you have a digital notebook where you write down all your homework or chores. This program is like that notebook, but on the computer! It can:
+    1. Add new tasks (like "Do laundry")
+    2. Find tasks you already wrote
+    3. Update tasks (mark them as done, change due dates)
+    4. Delete tasks you don't need anymore
+    5. Count how many tasks you have in different categories
+The Main Parts (Like LEGO Blocks)
+Part 1: The Setup 🏗️
+python
+class TaskManager:
+    def __init__(self, storage_path="tasks.json"):
+        self.storage = TaskStorage(storage_path)
+Think of this like getting a new notebook. When you create a TaskManager, it gives you a notebook (a file called tasks.json) to write your tasks in.
+Part 2: Creating Tasks ✏️
+python
+def create_task(self, title, description="", priority_value=2,
+               due_date_str=None, tags=None):
+This is like writing a new to-do list item. You need:
+    • Title: The main thing (like "Buy milk")
+    • Description: More details (like "Get 2% milk from store")
+    • Priority: How important (1=Very important, 2=Medium, 3=Not urgent)
+    • Due date: When it needs to be done ("2024-12-25")
+    • Tags: Labels to group tasks ("shopping", "home")
+Example:
+python
+manager = TaskManager()
+manager.create_task(
+    title="Walk the dog",
+    description="Take Sparky around the block",
+    priority_value=1,  # Important!
+    due_date_str="2024-12-10",
+    tags=["pet", "daily"]
+)
+Part 3: Finding Tasks 🔍
+python
+def list_tasks(self, status_filter=None, priority_filter=None, show_overdue=False):
+This helps you find tasks in different ways:
+    • All tasks
+    • Only tasks that are "done"
+    • Only important tasks
+    • Only tasks that are past their due date
+Example:
+python
+# See all tasks
+all_tasks = manager.list_tasks()
+
+# See only urgent tasks
+urgent_tasks = manager.list_tasks(priority_filter=1)  # 1 = high priority
+
+# See what's overdue
+late_tasks = manager.list_tasks(show_overdue=True)
+Part 4: Updating Tasks ✨
+You can change tasks after creating them:
+python
+# Mark a task as done
+manager.update_task_status(5, "done")  # Task #5 is now done!
+
+# Make a task more urgent
+manager.update_task_priority(5, 1)  # Now it's high priority
+
+# Change the due date
+manager.update_task_due_date(5, "2024-12-15")
+Part 5: Tags (Like Sticky Notes) 🏷️
+Tags help organize tasks:
+python
+# Add a tag
+manager.add_tag_to_task(5, "weekend")  # Tag task #5 as "weekend"
+
+# Remove a tag
+manager.remove_tag_from_task(5, "weekend")  # Remove that tag
+Part 6: Getting Statistics 📊
+See how you're doing:
+python
+stats = manager.get_statistics()
+print(f"You have {stats['total']} total tasks")
+print(f"{stats['overdue']} tasks are overdue!")
+print(f"You completed {stats['completed_last_week']} tasks last week")
+How to Modify This (Safely!)
+Change 1: Add a Simple Method
+Want to add a method to clear all tags from a task?
+python
+def clear_all_tags(self, task_id):
+    """Remove all tags from a task"""
+    task = self.storage.get_task(task_id)
+    if task:
+        task.tags = []  # Empty the tags list
+        self.storage.save()
+        return True
+    return False
+Change 2: Add Input Checking
+Make sure titles aren't empty:
+python
+def create_task(self, title, description="", priority_value=2,
+               due_date_str=None, tags=None):
+    # ADD THIS CHECK
+    if not title or title.strip() == "":
+        print("Error: Task title cannot be empty!")
+        return None
+    
+    # Rest of the code stays the same...
+Change 3: Make It User-Friendly
+Add a method to print tasks nicely:
+python
+def print_tasks_pretty(self):
+    """Print all tasks in a nice format"""
+    tasks = self.list_tasks()
+    for task in tasks:
+        status_emoji = "✅" if task.status == "done" else "⏳"
+        print(f"{status_emoji} {task.title}")
+        print(f"   Due: {task.due_date}")
+        print(f"   Tags: {', '.join(task.tags) if task.tags else 'None'}")
+        print("---")
+Common Things You Might Want to Change
+1. Change date format (from YYYY-MM-DD to MM/DD/YYYY):
+python
+# In create_task and update_task_due_date methods:
+# Change this line:
+due_date = datetime.strptime(due_date_str, "%Y-%m-%d")
+# To this:
+due_date = datetime.strptime(due_date_str, "%m/%d/%Y")
+2. Add a search by tag:
+python
+def search_by_tag(self, tag_name):
+    """Find all tasks with a specific tag"""
+    all_tasks = self.storage.get_all_tasks()
+    results = []
+    for task in all_tasks:
+        if tag_name in task.tags:
+            results.append(task)
+    return results
+3. Add a reminder feature:
+python
+def get_tasks_due_today(self):
+    """Get tasks due today"""
+    today = datetime.now().date()
+    all_tasks = self.storage.get_all_tasks()
+    due_today = []
+    for task in all_tasks:
+        if task.due_date and task.due_date.date() == today:
+            due_today.append(task)
+    return due_today
+Practice Exercises (Try These!)
+Exercise 1: Add Color to Priorities
+python
+def get_task_with_colors(self, task_id):
+    task = self.get_task_details(task_id)
+    if task:
+        colors = {
+            1: "🔴 RED (High)",
+            2: "🟡 YELLOW (Medium)", 
+            3: "🟢 GREEN (Low)"
+        }
+        task.priority_color = colors.get(task.priority_value, "⚪ White")
+        return task
+    return None
+Exercise 2: Simple Text Interface
+python
+def simple_menu(self):
+    while True:
+        print("\n=== MY TASKS ===")
+        print("1. Add task")
+        print("2. View all tasks")
+        print("3. Mark task as done")
+        print("4. Exit")
+        
+        choice = input("Choose (1-4): ")
+        
+        if choice == "1":
+            title = input("Task title: ")
+            self.create_task(title)
+            print("Task added!")
+        
+        elif choice == "2":
+            tasks = self.list_tasks()
+            for i, task in enumerate(tasks, 1):
+                print(f"{i}. {task.title}")
+        
+        elif choice == "3":
+            # You try to write this part!
+            pass
+        
+        elif choice == "4":
+            print("Goodbye!")
+            break
+Important Things to Remember
+    1. Backup First! Before changing code, save a copy
+    2. Test Small Changes - Change one thing, test it, then change another
+    3. Ask for Help - If something breaks, ask someone or search online
+    4. Have Fun! Programming is like solving puzzles 🧩
+Quick Reference Guide
+ 
+ 
+What you want to do	Code to use
+Add a task	create_task("Task name")
+See all tasks	list_tasks()
+Mark as done	update_task_status(id, "done")
+Delete a task	delete_task(id)
+Add a tag	add_tag_to_task(id, "tag_name")
+Need Help? Common Questions:
+Q: How do I know what task ID to use?
+A: When you create a task, it returns the ID. Or use list_tasks() to see all IDs.
+Q: What if I enter a wrong date?
+A: The program will say "Invalid date format" and won't save it.
+Q: Where are tasks saved?
+A: In a file called tasks.json (you can open it with Notepad!)
+Q: Can two people use this at once?
+A: No, this is for one person. For multiple people, we'd need a database.
+Try playing with the code! Start by adding some tasks, then try the statistics. Once comfortable, try adding one small feature at a time. You can do it! 🌟
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+now do this2.intent and logic explanation-i need help to document intent anf logic behind this code Explain what this code is tryng to accomplish at a high level Break down the logiv step by step identify any assumptions or edge cases in the implementation suggest inline comments for complex parameters note any potenentialimprovements while maintaining the original functionality and give me any improvent that can be made to this code to affect its functionality
+ 
+ 
+ 
+ 
+ 
+ 
+Intent and Logic Explanation - Explained for Beginners
+1. What This Code is Trying to Do (High Level)
+Think of this as a Digital To-Do List Manager 📝✨
+Imagine you're in charge of:
+    • A notebook where people write tasks (that's the storage)
+    • A helper who can organize those tasks (that's the TaskManager)
+The Goal: Help someone keep track of things they need to do, with superpowers like:
+    • Sorting tasks by importance (🚨 Urgent vs. 😴 Low priority)
+    • Finding overdue tasks (⏰ Late!)
+    • Adding labels/tags to tasks (🏷️ Shopping, 🏠 Home, 💼 Work)
+    • Seeing progress with statistics (📊 How many tasks done this week?)
+2. Breaking Down the Logic (Step by Step)
+Step 1: Getting a Notebook Ready 📒
+python
+def __init__(self, storage_path="tasks.json"):
+    self.storage = TaskStorage(storage_path)
+What happens: When you create a TaskManager, it grabs a notebook called "tasks.json" to write tasks in.
+Step 2: Adding a New Task ✏️
+python
+def create_task(self, title, description="", priority_value=2,
+               due_date_str=None, tags=None):
+The process:
+    1. Check priority: Convert number (1,2,3) to "High, Medium, Low"
+    2. Check date: If given, make sure it's in the right format (YYYY-MM-DD)
+    3. Make the task: Bundle everything together
+    4. Save it: Put it in the notebook with a unique ID
+    5. Give you the ID: So you can find it later
+Example Flow:
+text
+You say: "Add task 'Buy milk' (priority 1) due Dec 25"
+Program does:
+1. Priority 1 → "HIGH PRIORITY"
+2. "2024-12-25" → ✅ Good date!
+3. Create task bundle
+4. Save to notebook → Returns ID #7
+5. You get: "Task created with ID #7"
+Step 3: Finding Tasks 🔍
+python
+def list_tasks(self, status_filter=None, priority_filter=None, show_overdue=False):
+The logic flow:
+text
+Is show_overdue True?
+    ↓ Yes → Get only overdue tasks (STOP HERE)
+    ↓ No → Check status_filter
+            ↓ Has value? → Get tasks with that status (STOP HERE)
+            ↓ No → Check priority_filter
+                    ↓ Has value? → Get tasks with that priority
+                    ↓ No → Get ALL tasks
+Why this order? It's like a filter waterfall - once it finds a match, it stops looking.
+Step 4: Marking Tasks as Done ✅
+python
+def update_task_status(self, task_id, new_status_value):
+Special handling for "done":
+    • If marking as "done": Also save WHEN it was completed
+    • Other statuses (like "in progress"): Just change the status
+Step 5: Tag System 🏷️
+python
+def add_tag_to_task(self, task_id, tag):
+    task = self.storage.get_task(task_id)
+    if task:
+        if tag not in task.tags:      # ← Check if tag already exists
+            task.tags.append(tag)     # ← Add tag if new
+            self.storage.save()       # ← Save changes
+        return True
+    return False
+Smart feature: Won't add the same tag twice to the same task!
+Step 6: Statistics 📊
+python
+def get_statistics(self):
+What it counts:
+    1. Total tasks: Just count everything
+    2. By status: How many "pending", "in progress", "done"
+    3. By priority: How many "High", "Medium", "Low"
+    4. Overdue: Tasks past their due date
+    5. Completed recently: Tasks done in the last 7 days
+3. Assumptions & "What If?" Cases
+Assumptions (Things the Code Believes are True):
+    1. Task IDs are unique: Like Social Security numbers for tasks
+    2. Storage works perfectly: The notebook never gets lost or damaged
+    3. People enter dates correctly: Everyone uses YYYY-MM-DD format
+    4. Priority is 1,2,3 only: No one will try priority 4 or 0
+Edge Cases (Weird Situations):
+Case 1: Empty title
+python
+# What if someone creates a task with no title?
+manager.create_task("")  # ← Empty string!
+# Current code: Creates empty task 😕
+# Should we allow this? Probably not!
+Case 2: Same tag twice
+python
+# What if you add "shopping" tag twice?
+manager.add_tag_to_task(5, "shopping")
+manager.add_tag_to_task(5, "shopping")  # Same tag again!
+# Current code: Smart! Won't add duplicate ✅
+Case 3: Filter conflicts
+python
+# What if you ask for overdue AND high priority?
+manager.list_tasks(priority_filter=1, show_overdue=True)
+# Current code: Shows ONLY overdue, ignores priority filter
+# Is this what we want? Maybe not...
+Case 4: Invalid dates
+python
+# What if someone writes "Tomorrow" as date?
+manager.update_task_due_date(5, "Tomorrow")
+# Current code: Prints error, returns False ✅
+4. Suggested Inline Comments
+For tricky parts, add these comments:
+python
+def create_task(self, title, description="", priority_value=2,
+               due_date_str=None, tags=None):
+    # priority_value: 1=High(🚨), 2=Medium(⚠️), 3=Low(✅)
+    # due_date_str: Must be exactly "2024-12-25" format
+    # tags: Can be None (no tags) or list like ["shopping", "home"]
+    
+def list_tasks(self, status_filter=None, priority_filter=None, show_overdue=False):
+    # IMPORTANT: Filters work in this order:
+    # 1. show_overdue (if True, ignores other filters)
+    # 2. status_filter
+    # 3. priority_filter
+    # 4. If no filters, returns all tasks
+    
+def get_statistics(self):
+    # Returns dictionary with:
+    # - total: All tasks count
+    # - by_status: {"pending": 5, "in_progress": 3, "done": 10}
+    # - by_priority: {"HIGH": 2, "MEDIUM": 10, "LOW": 6}
+    # - overdue: Tasks past due date
+    # - completed_last_week: Done in last 7 days
+5. Potential Improvements
+Improvement 1: Better Input Validation
+Current issue: Allows empty task titles
+python
+def create_task(self, title, description="", priority_value=2,
+               due_date_str=None, tags=None):
+    # ADD AT THE BEGINNING:
+    if not title or title.strip() == "":
+        raise ValueError("Task title cannot be empty!")
+    
+    if priority_value not in [1, 2, 3]:
+        raise ValueError("Priority must be 1, 2, or 3!")
+    
+    # Rest of code...
+Improvement 2: Combined Filters
+Current issue: Can't find "High priority AND overdue tasks"
+python
+def list_tasks(self, status_filter=None, priority_filter=None, 
+               show_overdue=False, combine_filters=False):
+    # NEW: If combine_filters=True, apply ALL filters
+    if combine_filters:
+        results = self.storage.get_all_tasks()
+        filtered = []
+        for task in results:
+            match = True
+            if show_overdue and not task.is_overdue():
+                match = False
+            if status_filter and task.status != status_filter:
+                match = False
+            if priority_filter and task.priority != priority_filter:
+                match = False
+            if match:
+                filtered.append(task)
+        return filtered
+    # Old logic here...
+Improvement 3: Date Range Search
+Missing feature: Can't find tasks due "next week"
+python
+def get_tasks_due_between(self, start_date_str, end_date_str):
+    """Find tasks due between two dates"""
+    try:
+        start = datetime.strptime(start_date_str, "%Y-%m-%d")
+        end = datetime.strptime(end_date_str, "%Y-%m-%d")
+        all_tasks = self.storage.get_all_tasks()
+        results = []
+        for task in all_tasks:
+            if task.due_date and start <= task.due_date <= end:
+                results.append(task)
+        return results
+    except ValueError:
+        print("Invalid date format")
+        return []
+Improvement 4: Undo/Redo Feature
+Missing feature: Can't undo accidental delete
+python
+class TaskManager:
+    def __init__(self, storage_path="tasks.json"):
+        self.storage = TaskStorage(storage_path)
+        self.history = []  # NEW: Keep track of changes
+        self.redo_stack = []  # NEW: For redoing
+    
+    def delete_task(self, task_id):
+        # Before deleting, save a copy to history
+        task = self.storage.get_task(task_id)
+        if task:
+            self.history.append(("delete", task.copy()))  # Save for undo
+            self.redo_stack.clear()  # Clear redo when new action
+            return self.storage.delete_task(task_id)
+        return False
+    
+    def undo(self):
+        """Undo the last action"""
+        if self.history:
+            action, data = self.history.pop()
+            if action == "delete":
+                self.redo_stack.append(("delete", data.id))
+                self.storage.add_task(data)  # Restore task
+                return True
+        return False
+Improvement 5: Task Dependencies
+New functionality: Make tasks depend on other tasks
+python
+def create_task(self, title, description="", priority_value=2,
+               due_date_str=None, tags=None, depends_on=None):
+    # Add dependency feature
+    task = Task(title, description, priority, due_date, tags)
+    
+    # NEW: Handle dependencies
+    if depends_on:
+        if depends_on in self.storage.get_all_task_ids():
+            task.depends_on = depends_on
+        else:
+            print(f"Warning: Task {depends_on} doesn't exist!")
+    
+    task_id = self.storage.add_task(task)
+    return task_id
+
+def can_mark_done(self, task_id):
+    """Check if all dependencies are done before marking complete"""
+    task = self.storage.get_task(task_id)
+    if task.depends_on:
+        parent = self.storage.get_task(task.depends_on)
+        if parent.status != "done":
+            return False, f"Complete task {task.depends_on} first!"
+    return True, "OK"
+Improvement 6: Reminder System
+python
+def get_upcoming_deadlines(self, days_ahead=7):
+    """Get tasks due in the next X days"""
+    today = datetime.now().date()
+    future_date = today + timedelta(days=days_ahead)
+    
+    all_tasks = self.storage.get_all_tasks()
+    upcoming = []
+    
+    for task in all_tasks:
+        if task.due_date:
+            task_date = task.due_date.date()
+            if today <= task_date <= future_date:
+                # Calculate urgency
+                days_left = (task_date - today).days
+                if days_left <= 1:
+                    task.urgency = "🚨 TODAY/TOMORROW"
+                elif days_left <= 3:
+                    task.urgency = "⚠️ SOON"
+                else:
+                    task.urgency = "✅ PLANNED"
+                upcoming.append(task)
+    
+    return sorted(upcoming, key=lambda t: t.due_date)
+Improvement 7: Export/Import Features
+python
+def export_to_csv(self, filename="tasks_export.csv"):
+    """Save tasks to CSV file for Excel/Google Sheets"""
+    import csv
+    tasks = self.storage.get_all_tasks()
+    
+    with open(filename, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['ID', 'Title', 'Status', 'Priority', 'Due Date', 'Tags'])
+        
+        for task in tasks:
+            writer.writerow([
+                task.id,
+                task.title,
+                task.status.value,
+                task.priority.name,
+                task.due_date.strftime("%Y-%m-%d") if task.due_date else "",
+                ";".join(task.tags) if task.tags else ""
+            ])
+    
+    return f"Exported {len(tasks)} tasks to {filename}"
+
+def import_from_csv(self, filename):
+    """Load tasks from CSV file"""
+    import csv
+    imported_count = 0
+    
+    with open(filename, 'r') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            tags = row['Tags'].split(';') if row['Tags'] else None
+            self.create_task(
+                title=row['Title'],
+                priority_value={'HIGH': 1, 'MEDIUM': 2, 'LOW': 3}[row['Priority']],
+                due_date_str=row['Due Date'] if row['Due Date'] else None,
+                tags=tags
+            )
+            imported_count += 1
+    
+    return f"Imported {imported_count} tasks"
+Quick Summary of Improvements:
+    1. Validation - Stop bad data from entering
+    2. Better filters - Combine multiple filters
+    3. Date ranges - Find tasks due in specific periods
+    4. Undo/Redo - Fix mistakes easily
+    5. Dependencies - Task A must be done before Task B
+    6. Reminders - Get warnings for upcoming deadline
+    7. Export/Import - Share tasks with other programs
